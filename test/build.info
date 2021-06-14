@@ -38,7 +38,7 @@ IF[{- !$disabled{tests} -}]
           v3nametest v3ext \
           evp_pkey_provided_test evp_test evp_extra_test evp_extra_test2 \
           evp_fetch_prov_test v3nametest v3ext \
-          crltest danetest bad_dtls_test lhash_test sparse_array_test \
+          crltest danetest bad_dtls_test lhash_test sparse_array_test memcmp_test \
           conf_include_test params_api_test params_conversion_test \
           constant_time_test verify_extra_test clienthellotest \
           packettest asynctest secmemtest srptest memleaktest stack_test \
@@ -266,6 +266,10 @@ IF[{- !$disabled{tests} -}]
   SOURCE[lhash_test]=lhash_test.c
   INCLUDE[lhash_test]=../include ../apps/include
   DEPEND[lhash_test]=../libcrypto libtestutil.a
+
+  SOURCE[memcmp_test]=memcmp_test.c
+  INCLUDE[memcmp_test]=../include ../apps/include
+  DEPEND[memcmp_test]=../libcrypto libtestutil.a
 
   SOURCE[dtlsv1listentest]=dtlsv1listentest.c
   INCLUDE[dtlsv1listentest]=../include ../apps/include

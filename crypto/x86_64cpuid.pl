@@ -281,33 +281,102 @@ OPENSSL_cleanse:
 CRYPTO_memcmp:
 .cfi_startproc
 	endbranch
-	xor	%rax,%rax
-	xor	%r10,%r10
-	cmp	\$0,$arg3
-	je	.Lno_data
-	cmp	\$16,$arg3
-	jne	.Loop_cmp
-	mov	($arg1),%r10
-	mov	8($arg1),%r11
-	mov	\$1,$arg3
-	xor	($arg2),%r10
-	xor	8($arg2),%r11
-	or	%r11,%r10
-	cmovnz	$arg3,%rax
+	mov $arg3,%rax
+	add $arg1,$arg3
+	
+	cmp \$17,%rax
+	jb .Lmemcmp_le_16b
+	
+	sub $arg1,$arg2
+	sub \$16,$arg3
+	pcmpeqd %xmm2,%xmm2
+
+.p2align 4
+.Lmemcmp_sse_loop:
+	movups ($arg1),%xmm0
+	movups ($arg2,$arg1),%xmm1
+	pcmpeqd %xmm1,%xmm0
+	pand %xmm0,%xmm2
+	add \$16,$arg1
+	cmp $arg3,$arg1
+	jb .Lmemcmp_sse_loop
+
+	# 16 bytes or less left, load 16 bytes from the end of the
+	# data ranges. It may overlap with the last comparison but
+	# that will not affect correctness of the result.
+	# Spares the need for scalar remainder loop.
+	
+	movups ($arg3),%xmm0
+	movups ($arg2,$arg3),%xmm1
+	pcmpeqd %xmm1,%xmm0
+	pand %xmm0,%xmm2
+	
+	pmovmskb %xmm2,%eax
+	sub \$0xffff,%eax
 	ret
 
-.align	16
-.Loop_cmp:
-	mov	($arg1),%r10b
-	lea	1($arg1),$arg1
-	xor	($arg2),%r10b
-	lea	1($arg2),$arg2
-	or	%r10b,%al
-	dec	$arg3
-	jnz	.Loop_cmp
-	neg	%rax
-	shr	\$63,%rax
-.Lno_data:
+.Lmemcmp_le_16b:
+	# Size is less or equal 16 bytes.
+	# Check if it is safe to perform 16-byte loads for both args.
+	#
+	# Unsafe only when size is less than 16 bytes and there is a page
+	# boundary somewhere in the range [arg+size; arg+16).
+
+	lea 15($arg1),%r9
+	xor $arg3,%r9        # If 12-th bit is one => page boundary crossed.
+
+	lea 15($arg2), %r10
+	lea ($arg2,%rax), %r11
+	xor %r11, %r10      # If 12-th bit is one => page boundary crossed.
+
+	# We'll need -size below, so negate and check for zero at the same time.
+	# If size was 0 then return 0 without accessing any memory.
+	neg %eax
+	jnc .Lmemcmp_ret
+
+	or %r10, %r9
+	test \$4096, %r9      # If a 16-byte load from either arg1 or arg2
+			      # crosses a page boundary at a byte beyond the
+			      # specified size of the arrays then fallback to
+			      # safe byte loop.
+	jnz .Lmemcmp_page_crossing
+
+	movups ($arg1),%xmm0
+	movups ($arg2),%xmm1
+	pcmpeqb %xmm1,%xmm0
+	lea 32(%rax),%ecx
+	pmovmskb %xmm0,%eax
+	not %eax
+
+	# At this point EAX has a bit-pattern (from high to low):
+	# 1111'1111'1111'1111'gggg....xxxx'
+	#
+	# 'g' bits are garbage (whatever happened to be
+	# there at the end of 16-byte load past the size).
+	#
+	# 'x' lowest bits are the result of comparison. And
+	# there are (size) number of them.
+	#
+	# Now get rid of 1 and g bits by shifting left by ECX (32 - size).
+	# ECX here is in range [16; 31]
+	#
+	shll %cl,%eax
+.Lmemcmp_ret:
+	ret
+
+.Lmemcmp_page_crossing:
+	# Rare codepath. arg3 < 16 bytes and arg1 or arg2 cross page boundary.
+
+	sub $arg1, $arg2
+	xor %eax, %eax
+
+.Lmemcmp_byte_loop:
+	mov ($arg1),%r9b
+	xor ($arg2,$arg1),%r9b
+	or %r9b,%al
+	add \$1,$arg1
+	cmp $arg3,$arg1
+	jne .Lmemcmp_byte_loop
 	ret
 .cfi_endproc
 .size	CRYPTO_memcmp,.-CRYPTO_memcmp
